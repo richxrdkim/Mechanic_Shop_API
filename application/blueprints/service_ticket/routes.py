@@ -1,20 +1,23 @@
 from flask import Blueprint, request, jsonify
 from application.models import ServiceTicket, User, Mechanic
-from application.extensions import db
+from application.extensions import db, limiter, cache
 from .schemas import TicketSchema
+from app.utils.util import token_required  # <-- add this
 
 ticket_bp = Blueprint("ticket_bp", __name__)
 
 ticket_schema = TicketSchema()
 tickets_schema = TicketSchema(many=True)
 
-# CREATE
+# CREATE (Protected)
 
 
 @ticket_bp.route("/", methods=["POST"])
-def create_ticket():
+@token_required
+def create_ticket(*, user_id):
     data = request.get_json() or {}
-    # (Optional) quick sanity checks
+
+    # Optional sanity checks (as you had)
     if "user_id" in data and data["user_id"]:
         User.query.get_or_404(data["user_id"])
     if "mechanic_id" in data and data["mechanic_id"]:
@@ -25,27 +28,31 @@ def create_ticket():
     db.session.commit()
     return ticket_schema.jsonify(ticket), 201
 
-# READ all
+# READ all (Protected + Cached after auth)
 
 
 @ticket_bp.route("/", methods=["GET"])
-def list_tickets():
+@token_required
+@cache.cached(timeout=60)
+def list_tickets(*, user_id):
     tickets = ServiceTicket.query.all()
     return jsonify(tickets_schema.dump(tickets)), 200
 
-# READ one
+# READ one (Protected)
 
 
 @ticket_bp.route("/<int:ticket_id>", methods=["GET"])
-def get_ticket(ticket_id):
+@token_required
+def get_ticket(ticket_id, *, user_id):
     ticket = ServiceTicket.query.get_or_404(ticket_id)
     return ticket_schema.jsonify(ticket), 200
 
-# UPDATE
+# UPDATE (Protected)
 
 
 @ticket_bp.route("/<int:ticket_id>", methods=["PUT"])
-def update_ticket(ticket_id):
+@token_required
+def update_ticket(ticket_id, *, user_id):
     ticket = ServiceTicket.query.get_or_404(ticket_id)
     data = request.get_json() or {}
     for k, v in data.items():
@@ -54,11 +61,12 @@ def update_ticket(ticket_id):
     db.session.commit()
     return ticket_schema.jsonify(ticket), 200
 
-# DELETE
+# DELETE (Protected)
 
 
 @ticket_bp.route("/<int:ticket_id>", methods=["DELETE"])
-def delete_ticket(ticket_id):
+@token_required
+def delete_ticket(ticket_id, *, user_id):
     ticket = ServiceTicket.query.get_or_404(ticket_id)
     db.session.delete(ticket)
     db.session.commit()

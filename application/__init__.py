@@ -1,8 +1,9 @@
 from flask import Flask
-from .extensions import db, ma, migrate
+from .extensions import db, ma, migrate, limiter
 from .blueprints.user.routes import user_bp
 from .blueprints.mechanic.routes import mechanic_bp
 from .blueprints.service_ticket.routes import ticket_bp
+from .extensions import ma, limiter, cache
 
 
 def create_app():
@@ -13,6 +14,8 @@ def create_app():
     db.init_app(app)
     ma.init_app(app)
     migrate.init_app(app, db)
+    limiter.init_app(app)
+    cache.init_app(app)
 
     # register blueprints
     app.register_blueprint(user_bp, url_prefix="/users")
