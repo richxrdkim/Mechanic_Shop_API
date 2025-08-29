@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from application.models import ServiceTicket, User, Mechanic
 from application.extensions import db, limiter, cache
 from .schemas import TicketSchema
-from app.utils.util import token_required  # <-- add this
+from application.utils.util import token_required  # <-- add this
 
 ticket_bp = Blueprint("ticket_bp", __name__)
 

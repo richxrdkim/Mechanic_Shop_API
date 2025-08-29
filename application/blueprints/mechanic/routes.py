@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from application.models import Mechanic
 from application.extensions import db, limiter, cache
 from .schemas import MechanicSchema
-from app.utils.util import token_required  # <-- add this
+from application.utils.util import token_required  # <-- add this
 
 mechanic_bp = Blueprint("mechanic_bp", __name__)
 
