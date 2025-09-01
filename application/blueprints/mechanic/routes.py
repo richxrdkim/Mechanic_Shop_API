@@ -1,68 +1,91 @@
-from flask import Blueprint, request, jsonify
-from application.models import Mechanic
+from flask import request, jsonify
+from sqlalchemy import func, desc
 from application.extensions import db, limiter, cache
-from .schemas import MechanicSchema
-from application.utils.util import token_required  # <-- add this
+from application.models import Mechanic, ticket_mechanics
+from application.utils.util import token_required, mechanic_token_required
+from . import mechanic_bp
+from .schemas import mechanic_schema, mechanics_schema, mechanics_with_count_schema
 
-mechanic_bp = Blueprint("mechanic_bp", __name__)
-
-mechanic_schema = MechanicSchema()
-mechanics_schema = MechanicSchema(many=True)
-
-# CREATE (Protected)
+# CREATE mechanic
 
 
 @mechanic_bp.route("/", methods=["POST"])
 @limiter.limit("5 per hour")
 @token_required
-def add_mechanic(*, user_id):
+def create_mechanic(*, user_id, role):
     data = request.get_json() or {}
-    mech = mechanic_schema.load(data)
+    name = data.get("name")
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    mech = Mechanic(name=name, specialty=data.get("specialty"))
     db.session.add(mech)
     db.session.commit()
     return mechanic_schema.jsonify(mech), 201
 
-# READ all (Protected + Cached after auth)
+# LIST mechanics (cached)
 
 
 @mechanic_bp.route("/", methods=["GET"])
-@token_required
-@cache.cached(timeout=60)
-def get_mechanics(*, user_id):
-    mechs = Mechanic.query.all()
+@cache.cached(timeout=60, query_string=True)
+def list_mechanics():
+    mechs = Mechanic.query.order_by(Mechanic.name.asc()).all()
     return jsonify(mechanics_schema.dump(mechs)), 200
 
-# READ one (Protected)
-
-
-@mechanic_bp.route("/<int:mechanic_id>", methods=["GET"])
-@token_required
-def get_mechanic(mechanic_id, *, user_id):
-    mech = Mechanic.query.get_or_404(mechanic_id)
-    return mechanic_schema.jsonify(mech), 200
-
-# UPDATE (Protected)
+# UPDATE mechanic
 
 
 @mechanic_bp.route("/<int:mechanic_id>", methods=["PUT"])
 @token_required
-def update_mechanic(mechanic_id, *, user_id):
+def update_mechanic(mechanic_id, *, user_id, role):
     mech = Mechanic.query.get_or_404(mechanic_id)
     data = request.get_json() or {}
-    for k, v in data.items():
-        if hasattr(mech, k):
-            setattr(mech, k, v)
+    mech.name = data.get("name", mech.name)
+    mech.specialty = data.get("specialty", mech.specialty)
     db.session.commit()
     return mechanic_schema.jsonify(mech), 200
 
-# DELETE (Protected + rate limited)
+# DELETE mechanic
 
 
 @mechanic_bp.route("/<int:mechanic_id>", methods=["DELETE"])
 @limiter.limit("5 per hour")
 @token_required
-def delete_mechanic(mechanic_id, *, user_id):
+def delete_mechanic(mechanic_id, *, user_id, role):
     mech = Mechanic.query.get_or_404(mechanic_id)
     db.session.delete(mech)
     db.session.commit()
     return jsonify({"message": f"Mechanic {mechanic_id} deleted"}), 200
+
+# LEADERBOARD (advanced query, cached)
+
+
+@mechanic_bp.route("/leaderboard", methods=["GET"])
+@token_required
+@cache.cached(timeout=60, query_string=True)
+def mechanics_leaderboard(*, user_id, role):
+    limit = request.args.get("limit", 50)
+    try:
+        limit = min(int(limit), 200)
+        if limit <= 0:
+            limit = 50
+    except ValueError:
+        limit = 50
+
+    q = (
+        db.session.query(
+            Mechanic,
+            func.count(ticket_mechanics.c.service_ticket_id).label(
+                "tickets_count"),
+        )
+        .outerjoin(ticket_mechanics, Mechanic.id == ticket_mechanics.c.mechanic_id)
+        .group_by(Mechanic.id)
+        .order_by(desc("tickets_count"), Mechanic.name.asc())
+        .limit(limit)
+    )
+    rows = q.all()
+    payload = [
+        {"id": m.id, "name": m.name, "specialty": m.specialty,
+            "tickets_count": int(c or 0)}
+        for m, c in rows
+    ]
+    return jsonify(mechanics_with_count_schema.dump(payload)), 200

@@ -1,51 +1,73 @@
-import jwt
-from datetime import datetime, timedelta
-from flask import request, jsonify, current_app
 from functools import wraps
+from datetime import datetime, timedelta, timezone
+from flask import request, jsonify, current_app
+from jose import jwt, JWTError
 
 
-def encode_token(user_id):
-    """Generate JWT token with 1-hour expiry"""
+def encode_token(user_id: int, role: str = "user", expires_in: int | None = None) -> str:
+    """
+    Create a JWT for a user (or mechanic when role='mechanic').
+    """
+    secret = current_app.config["SECRET_KEY"]
+    if expires_in is None:
+        expires_in = current_app.config.get("TOKEN_EXPIRES_IN", 3600)
+    now = datetime.now(tz=timezone.utc)
     payload = {
-        "exp": datetime.utcnow() + timedelta(hours=1),
-        "iat": datetime.utcnow(),
-        "sub": user_id
+        "sub": str(user_id),
+        "role": role,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=expires_in)).timestamp()),
     }
-    return jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm="HS256")
+    return jwt.encode(payload, secret, algorithm="HS256")
 
 
-def decode_token(token):
-    """Decode a JWT token and return user_id or error string"""
+def _decode_token_or_401(token: str):
     try:
         payload = jwt.decode(
             token, current_app.config["SECRET_KEY"], algorithms=["HS256"])
-        return payload["sub"]   # user_id
-    except jwt.ExpiredSignatureError:
-        return "Token expired"
-    except jwt.InvalidTokenError:
-        return "Invalid token"
+        return payload
+    except JWTError:
+        return None
 
 
-def token_required(f):
-    """Decorator to protect routes with JWT"""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
+def _extract_bearer():
+    hdr = request.headers.get("Authorization", "")
+    if not hdr.startswith("Bearer "):
+        return None
+    return hdr.split(" ", 1)[1].strip()
 
-        # Look for token in the Authorization header
-        if "Authorization" in request.headers:
-            auth_header = request.headers["Authorization"]
-            if auth_header.startswith("Bearer "):
-                token = auth_header.split(" ")[1]
 
+def token_required(fn):
+    """
+    Validates Bearer token. Injects user_id and role into the route as keyword-only args.
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = _extract_bearer()
         if not token:
-            return jsonify({"message": "Token is missing!"}), 401
+            return jsonify({"error": "Authorization header missing or invalid"}), 401
+        payload = _decode_token_or_401(token)
+        if not payload:
+            return jsonify({"error": "Invalid or expired token"}), 401
+        kwargs["user_id"] = int(payload.get("sub", 0))
+        kwargs["role"] = payload.get("role", "user")
+        return fn(*args, **kwargs)
+    return wrapper
 
-        user_id = decode_token(token)
-        if isinstance(user_id, str):  # If it's an error message
-            return jsonify({"message": user_id}), 401
 
-        # Pass user_id into route if needed
-        return f(user_id=user_id, *args, **kwargs)
-
-    return decorated
+def mechanic_token_required(fn):
+    """
+    Optional-challenge: requires a token with role="mechanic".
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = _extract_bearer()
+        if not token:
+            return jsonify({"error": "Authorization header missing or invalid"}), 401
+        payload = _decode_token_or_401(token)
+        if not payload or payload.get("role") != "mechanic":
+            return jsonify({"error": "Mechanic authorization required"}), 403
+        kwargs["user_id"] = int(payload.get("sub", 0))
+        kwargs["role"] = "mechanic"
+        return fn(*args, **kwargs)
+    return wrapper

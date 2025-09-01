@@ -1,1 +1,3 @@
-from .routes import ticket_bp  # noqa: F401
+from flask import Blueprint
+ticket_bp = Blueprint("ticket_bp", __name__)
+from . import routes  # noqa

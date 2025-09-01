@@ -1,73 +1,105 @@
-from flask import Blueprint, request, jsonify
-from application.models import ServiceTicket, User, Mechanic
+from flask import request, jsonify
+from werkzeug.exceptions import BadRequest
 from application.extensions import db, limiter, cache
-from .schemas import TicketSchema
-from application.utils.util import token_required  # <-- add this
+from application.models import ServiceTicket, Mechanic, Inventory
+from application.utils.util import token_required
+from . import ticket_bp
+from .schemas import ticket_schema, tickets_schema
 
-ticket_bp = Blueprint("ticket_bp", __name__)
-
-ticket_schema = TicketSchema()
-tickets_schema = TicketSchema(many=True)
-
-# CREATE (Protected)
+# CREATE ticket
 
 
 @ticket_bp.route("/", methods=["POST"])
+@limiter.limit("10 per hour")
 @token_required
-def create_ticket(*, user_id):
+def create_ticket(*, user_id, role):
     data = request.get_json() or {}
-
-    # Optional sanity checks (as you had)
-    if "user_id" in data and data["user_id"]:
-        User.query.get_or_404(data["user_id"])
-    if "mechanic_id" in data and data["mechanic_id"]:
-        Mechanic.query.get_or_404(data["mechanic_id"])
-
-    ticket = ticket_schema.load(data)
-    db.session.add(ticket)
+    if "description" not in data:
+        return jsonify({"error": "description is required"}), 400
+    t = ServiceTicket(
+        description=data["description"], user_id=data.get("user_id", user_id))
+    # Optional: attach a legacy single mechanic_id
+    if "mechanic_id" in data:
+        t.mechanic_id = data["mechanic_id"]
+    db.session.add(t)
     db.session.commit()
-    return ticket_schema.jsonify(ticket), 201
+    return ticket_schema.jsonify(t), 201
 
-# READ all (Protected + Cached after auth)
-
-
-@ticket_bp.route("/", methods=["GET"])
-@token_required
-@cache.cached(timeout=60)
-def list_tickets(*, user_id):
-    tickets = ServiceTicket.query.all()
-    return jsonify(tickets_schema.dump(tickets)), 200
-
-# READ one (Protected)
+# GET one
 
 
 @ticket_bp.route("/<int:ticket_id>", methods=["GET"])
 @token_required
-def get_ticket(ticket_id, *, user_id):
-    ticket = ServiceTicket.query.get_or_404(ticket_id)
-    return ticket_schema.jsonify(ticket), 200
+def get_ticket(ticket_id, *, user_id, role):
+    t = ServiceTicket.query.get_or_404(ticket_id)
+    return ticket_schema.jsonify(t), 200
 
-# UPDATE (Protected)
+# LIST tickets (cached)
 
 
-@ticket_bp.route("/<int:ticket_id>", methods=["PUT"])
+@ticket_bp.route("/", methods=["GET"])
+@cache.cached(timeout=60, query_string=True)
+def list_tickets():
+    ts = ServiceTicket.query.order_by(ServiceTicket.id.desc()).all()
+    return jsonify(tickets_schema.dump(ts)), 200
+
+# UPDATE mechanics on a ticket (advanced query)
+
+
+@ticket_bp.route("/<int:ticket_id>/edit", methods=["PUT"])
 @token_required
-def update_ticket(ticket_id, *, user_id):
-    ticket = ServiceTicket.query.get_or_404(ticket_id)
+def edit_ticket_mechanics(ticket_id, *, user_id, role):
+    """
+    Body: {"add_ids":[...], "remove_ids":[...]}
+    """
+    t = ServiceTicket.query.get_or_404(ticket_id)
     data = request.get_json() or {}
-    for k, v in data.items():
-        if hasattr(ticket, k):
-            setattr(ticket, k, v)
-    db.session.commit()
-    return ticket_schema.jsonify(ticket), 200
+    add_ids = data.get("add_ids", []) or []
+    remove_ids = data.get("remove_ids", []) or []
 
-# DELETE (Protected)
+    if not isinstance(add_ids, list) or not isinstance(remove_ids, list):
+        raise BadRequest("add_ids and remove_ids must be lists")
+
+    if add_ids:
+        to_add = Mechanic.query.filter(Mechanic.id.in_(add_ids)).all()
+        found = {m.id for m in to_add}
+        missing = sorted(set(add_ids) - found)
+        if missing:
+            raise BadRequest(f"Unknown mechanic IDs: {missing}")
+        for m in to_add:
+            if m not in t.mechanics:
+                t.mechanics.append(m)
+
+    if remove_ids:
+        to_remove = Mechanic.query.filter(Mechanic.id.in_(remove_ids)).all()
+        for m in to_remove:
+            if m in t.mechanics:
+                t.mechanics.remove(m)
+
+    db.session.commit()
+    return ticket_schema.jsonify(t), 200
+
+# ADD a single inventory part to a ticket
+
+
+@ticket_bp.route("/<int:ticket_id>/add-part/<int:part_id>", methods=["POST"])
+@token_required
+def add_part_to_ticket(ticket_id, part_id, *, user_id, role):
+    t = ServiceTicket.query.get_or_404(ticket_id)
+    part = Inventory.query.get_or_404(part_id)
+    if part not in t.parts:
+        t.parts.append(part)
+        db.session.commit()
+    return ticket_schema.jsonify(t), 200
+
+# DELETE ticket
 
 
 @ticket_bp.route("/<int:ticket_id>", methods=["DELETE"])
+@limiter.limit("10 per hour")
 @token_required
-def delete_ticket(ticket_id, *, user_id):
-    ticket = ServiceTicket.query.get_or_404(ticket_id)
-    db.session.delete(ticket)
+def delete_ticket(ticket_id, *, user_id, role):
+    t = ServiceTicket.query.get_or_404(ticket_id)
+    db.session.delete(t)
     db.session.commit()
     return jsonify({"message": f"Ticket {ticket_id} deleted"}), 200
