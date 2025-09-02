@@ -1,3 +1,4 @@
+
 import os
 
 
@@ -7,6 +8,9 @@ class Config:
         "mysql+mysqlconnector://root:YOUR_PASSWORD@localhost/mechanic_shop_api"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    # set in env for prod
-    SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
-    TOKEN_EXPIRES_IN = int(os.getenv("TOKEN_EXPIRES_IN", "3600"))  # seconds
+    SECRET_KEY = os.getenv("SECRET_KEY", "dev_secret_key")
+    TOKEN_EXPIRES_IN = int(os.getenv("TOKEN_EXPIRES_IN", "3600"))
+
+    # Caching
+    CACHE_TYPE = "SimpleCache"
+    CACHE_DEFAULT_TIMEOUT = 60

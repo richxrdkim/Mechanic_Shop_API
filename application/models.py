@@ -1,6 +1,7 @@
+
 from application.extensions import db
 
-# --- Many-to-many: tickets ↔ mechanics
+# --- Association tables ---
 ticket_mechanics = db.Table(
     "ticket_mechanics",
     db.Column("service_ticket_id", db.Integer, db.ForeignKey(
@@ -11,7 +12,6 @@ ticket_mechanics = db.Table(
                         name="uq_ticket_mechanic"),
 )
 
-# --- Many-to-many: tickets ↔ inventory parts
 inventory_tickets = db.Table(
     "inventory_tickets",
     db.Column("service_ticket_id", db.Integer, db.ForeignKey(
@@ -22,22 +22,28 @@ inventory_tickets = db.Table(
                         name="uq_ticket_part"),
 )
 
+# --- Models ---
+
 
 class User(db.Model):
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(100), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255))  # for login
-    tickets = db.relationship("ServiceTicket", backref="user", lazy=True)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+
+    tickets = db.relationship(
+        "ServiceTicket", back_populates="user", lazy="select")
 
 
 class Mechanic(db.Model):
     __tablename__ = "mechanics"
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    specialty = db.Column(db.String(100))
-    # M2M: tickets worked on
+    name = db.Column(db.String(120), nullable=False)
+    specialty = db.Column(db.String(120))
+
+    tickets_primary = db.relationship(
+        "ServiceTicket", back_populates="primary_mechanic", lazy="select")
     tickets = db.relationship(
         "ServiceTicket",
         secondary=ticket_mechanics,
@@ -46,15 +52,36 @@ class Mechanic(db.Model):
     )
 
 
+class Inventory(db.Model):
+    __tablename__ = "inventory"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    price = db.Column(db.Float, nullable=False)
+
+    tickets = db.relationship(
+        "ServiceTicket",
+        secondary=inventory_tickets,
+        back_populates="parts",
+        lazy="select",
+    )
+
+
 class ServiceTicket(db.Model):
     __tablename__ = "service_tickets"
     id = db.Column(db.Integer, primary_key=True)
     description = db.Column(db.String(255), nullable=False)
-    # Optional legacy single-mechanic FK; safe to keep
-    mechanic_id = db.Column(db.Integer, db.ForeignKey("mechanics.id"))
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    status = db.Column(db.String(50), default="open")
+    status = db.Column(db.String(50), default="open", nullable=False)
 
+    # Optional single "primary" mechanic
+    primary_mechanic_id = db.Column(db.Integer, db.ForeignKey("mechanics.id"))
+    primary_mechanic = db.relationship(
+        "Mechanic", back_populates="tickets_primary", foreign_keys=[primary_mechanic_id])
+
+    # The requesting user
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    user = db.relationship("User", back_populates="tickets")
+
+    # M2M helpers
     mechanics = db.relationship(
         "Mechanic",
         secondary=ticket_mechanics,
@@ -65,18 +92,5 @@ class ServiceTicket(db.Model):
         "Inventory",
         secondary=inventory_tickets,
         back_populates="tickets",
-        lazy="select",
-    )
-
-
-class Inventory(db.Model):
-    __tablename__ = "inventory"
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(120), nullable=False)
-    price = db.Column(db.Float, nullable=False)
-    tickets = db.relationship(
-        "ServiceTicket",
-        secondary=inventory_tickets,
-        back_populates="parts",
         lazy="select",
     )

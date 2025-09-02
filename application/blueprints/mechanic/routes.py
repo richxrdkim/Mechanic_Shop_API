@@ -1,12 +1,12 @@
 from flask import request, jsonify
-from sqlalchemy import func, desc
+from sqlalchemy import func, asc
 from application.extensions import db, limiter, cache
-from application.models import Mechanic, ticket_mechanics
-from application.utils.util import token_required, mechanic_token_required
+from application.models import Mechanic, ServiceTicket, ticket_mechanics
+from application.schemas import mechanic_schema, mechanics_schema, mechanics_with_count_schema
+from application.util import token_required
 from . import mechanic_bp
-from .schemas import mechanic_schema, mechanics_schema, mechanics_with_count_schema
 
-# CREATE mechanic
+# CREATE
 
 
 @mechanic_bp.route("/", methods=["POST"])
@@ -22,70 +22,83 @@ def create_mechanic(*, user_id, role):
     db.session.commit()
     return mechanic_schema.jsonify(mech), 201
 
-# LIST mechanics (cached)
+# LIST (cached)
 
 
 @mechanic_bp.route("/", methods=["GET"])
 @cache.cached(timeout=60, query_string=True)
 def list_mechanics():
-    mechs = Mechanic.query.order_by(Mechanic.name.asc()).all()
+    mechs = Mechanic.query.order_by(asc(Mechanic.name)).all()
     return jsonify(mechanics_schema.dump(mechs)), 200
 
-# UPDATE mechanic
+# READ
 
 
-@mechanic_bp.route("/<int:mechanic_id>", methods=["PUT"])
+@mechanic_bp.route("/<int:mid>", methods=["GET"])
+def get_mechanic(mid):
+    mech = Mechanic.query.get_or_404(mid)
+    return mechanic_schema.jsonify(mech), 200
+
+# UPDATE
+
+
+@mechanic_bp.route("/<int:mid>", methods=["PUT"])
 @token_required
-def update_mechanic(mechanic_id, *, user_id, role):
-    mech = Mechanic.query.get_or_404(mechanic_id)
+def update_mechanic(mid, *, user_id, role):
+    mech = Mechanic.query.get_or_404(mid)
     data = request.get_json() or {}
-    mech.name = data.get("name", mech.name)
-    mech.specialty = data.get("specialty", mech.specialty)
+    if "name" in data:
+        mech.name = data["name"]
+    if "specialty" in data:
+        mech.specialty = data["specialty"]
     db.session.commit()
     return mechanic_schema.jsonify(mech), 200
 
-# DELETE mechanic
+# DELETE
 
 
-@mechanic_bp.route("/<int:mechanic_id>", methods=["DELETE"])
-@limiter.limit("5 per hour")
+@mechanic_bp.route("/<int:mid>", methods=["DELETE"])
+@limiter.limit("10 per hour")
 @token_required
-def delete_mechanic(mechanic_id, *, user_id, role):
-    mech = Mechanic.query.get_or_404(mechanic_id)
+def delete_mechanic(mid, *, user_id, role):
+    mech = Mechanic.query.get_or_404(mid)
     db.session.delete(mech)
     db.session.commit()
-    return jsonify({"message": f"Mechanic {mechanic_id} deleted"}), 200
+    return jsonify({"deleted": mid}), 200
 
-# LEADERBOARD (advanced query, cached)
+# LEADERBOARD: total tickets per mechanic (primary + M2M)
 
 
 @mechanic_bp.route("/leaderboard", methods=["GET"])
-@token_required
-@cache.cached(timeout=60, query_string=True)
-def mechanics_leaderboard(*, user_id, role):
-    limit = request.args.get("limit", 50)
-    try:
-        limit = min(int(limit), 200)
-        if limit <= 0:
-            limit = 50
-    except ValueError:
-        limit = 50
+@cache.cached(timeout=60)
+def leaderboard():
+    # Primary-mechanic counts
+    primary_counts = (
+        db.session.query(ServiceTicket.primary_mechanic_id.label("mechanic_id"),
+                         func.count(ServiceTicket.id).label("cnt"))
+        .group_by(ServiceTicket.primary_mechanic_id)
+        .subquery()
+    )
+    # M2M counts
+    m2m_counts = (
+        db.session.query(ticket_mechanics.c.mechanic_id.label("mechanic_id"),
+                         func.count(ticket_mechanics.c.service_ticket_id).label("cnt"))
+        .group_by(ticket_mechanics.c.mechanic_id)
+        .subquery()
+    )
 
     q = (
         db.session.query(
-            Mechanic,
-            func.count(ticket_mechanics.c.service_ticket_id).label(
-                "tickets_count"),
+            Mechanic.id,
+            Mechanic.name,
+            Mechanic.specialty,
+            (func.coalesce(primary_counts.c.cnt, 0) +
+             func.coalesce(m2m_counts.c.cnt, 0)).label("tickets_count"),
         )
-        .outerjoin(ticket_mechanics, Mechanic.id == ticket_mechanics.c.mechanic_id)
-        .group_by(Mechanic.id)
-        .order_by(desc("tickets_count"), Mechanic.name.asc())
-        .limit(limit)
+        .outerjoin(primary_counts, Mechanic.id == primary_counts.c.mechanic_id)
+        .outerjoin(m2m_counts, Mechanic.id == m2m_counts.c.mechanic_id)
+        .order_by(func.coalesce(primary_counts.c.cnt, 0) + func.coalesce(m2m_counts.c.cnt, 0).desc())
     )
+
     rows = q.all()
-    payload = [
-        {"id": m.id, "name": m.name, "specialty": m.specialty,
-            "tickets_count": int(c or 0)}
-        for m, c in rows
-    ]
-    return jsonify(mechanics_with_count_schema.dump(payload)), 200
+    return jsonify(mechanics_with_count_schema.dump(rows)), 200
