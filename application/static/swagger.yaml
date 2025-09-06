@@ -1,0 +1,765 @@
+﻿swagger: "2.0"
+info:
+  title: "Mechanic Shop API"
+  version: "1.0.0"
+  description: |
+    REST API for users, mechanics, inventory and service tickets.
+
+    ## Authentication
+    - Click **Authorize** (top-right) and paste:
+      `Bearer <your_jwt_token>`
+    - Protected endpoints will return **401** if the header is missing/invalid.
+
+    ## Support
+    For help, email support@example.com
+
+host: "127.0.0.1:5000"
+schemes: [http]
+consumes: ["application/json"]
+produces: ["application/json"]
+
+tags:
+  - name: Users
+    description: "User signup/login and profile management"
+  - name: Mechanics
+    description: "Mechanic directory and management"
+  - name: Inventory
+    description: "Parts inventory (create/read/update/delete)"
+  - name: Tickets
+    description: "Service tickets and associations"
+
+securityDefinitions:
+  bearerAuth:
+    type: apiKey
+    name: Authorization
+    in: header
+
+# Global: everything is protected unless explicitly overridden with `security: []`
+security:
+  - bearerAuth: []
+
+paths:
+  ############################
+  # USERS (public + protected)
+  ############################
+  /users:
+    post:
+      operationId: signupUser
+      security: [] # public: signup
+      tags: [Users]
+      summary: "Signup (public)"
+      description: "Register a new user and receive a token."
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/UserSignupPayload" }
+          x-examples:
+            application/json:
+              name: "Ava Diaz"
+              email: "ava@example.com"
+              password: "P@ssw0rd!"
+      responses:
+        201:
+          description: "Created"
+          schema: { $ref: "#/definitions/UserWithToken" }
+          examples:
+            application/json:
+              id: 12
+              name: "Ava Diaz"
+              email: "ava@example.com"
+              token: "eyJhbGciOiJIUzI1NiIs..."
+        400:
+          description: "Bad request – validation failed."
+          schema: { $ref: "#/definitions/Error" }
+        409:
+          description: "Conflict – email already registered."
+          schema: { $ref: "#/definitions/ConflictError" }
+
+    get:
+      operationId: listUsers
+      tags: [Users]
+      summary: "List users (protected)"
+      description: "Paginated, cached list of users."
+      security:
+        - bearerAuth: [] # explicit (protected)
+      parameters:
+        - in: query
+          name: page
+          type: integer
+          description: "Page number (default 1)"
+        - in: query
+          name: per_page
+          type: integer
+          description: "Items per page (default 20)"
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/PaginatedUsers" }
+          examples:
+            application/json:
+              items:
+                - { id: 1, name: "Alice", email: "alice@example.com" }
+                - { id: 2, name: "Bob", email: "bob@example.com" }
+              page: 1
+              per_page: 20
+              total: 2
+              pages: 1
+        401:
+          description: "Unauthorized – send 'Authorization: Bearer <token>'."
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /users/login:
+    post:
+      operationId: loginUser
+      security: [] # public: login
+      tags: [Users]
+      summary: "Login (public)"
+      description: "Authenticate and receive JWT token."
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/LoginPayload" }
+          x-examples:
+            application/json:
+              email: "ava@example.com"
+              password: "P@ssw0rd!"
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/LoginResponse" }
+          examples:
+            application/json:
+              token: "eyJhbGciOiJIUzI1NiIs..."
+              user:
+                id: 12
+                name: "Ava Diaz"
+                email: "ava@example.com"
+        401:
+          description: "Unauthorized – bad credentials."
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /users/{uid}:
+    parameters:
+      - name: uid
+        in: path
+        required: true
+        type: integer
+    get:
+      operationId: getUser
+      tags: [Users]
+      summary: "Get user by id"
+      description: "Return a single user by id."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/User" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+        404:
+          description: "Not found"
+          schema: { $ref: "#/definitions/NotFoundError" }
+    put:
+      operationId: updateUser
+      tags: [Users]
+      summary: "Update user (self/admin)"
+      description: "Only the user themself or an admin can update."
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/UserUpdatePayload" }
+          x-examples:
+            application/json:
+              name: "Ava D."
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/User" }
+        400:
+          description: "Validation failed"
+          schema: { $ref: "#/definitions/Error" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+        403:
+          description: "Forbidden – not allowed to modify this user."
+          schema: { $ref: "#/definitions/Error" }
+    delete:
+      operationId: deleteUser
+      tags: [Users]
+      summary: "Delete user (self/admin)"
+      description: "Delete a user account."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "Deleted"
+          schema: { $ref: "#/definitions/DeleteResponse" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+        403:
+          description: "Forbidden"
+          schema: { $ref: "#/definitions/Error" }
+
+  /users/my-tickets:
+    get:
+      operationId: myTickets
+      tags: [Users]
+      summary: "My tickets"
+      description: "Tickets belonging to the authenticated user."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "OK"
+          schema:
+            type: array
+            items: { $ref: "#/definitions/ServiceTicket" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  ############################
+  # MECHANICS (public read, protected write)
+  ############################
+  /mechanics:
+    get:
+      operationId: listMechanicsPublic
+      security: [] # public
+      tags: [Mechanics]
+      summary: "List mechanics (public)"
+      description: "Cached list of mechanics (name asc)."
+      responses:
+        200:
+          description: "OK"
+          schema:
+            type: array
+            items: { $ref: "#/definitions/Mechanic" }
+
+    post:
+      operationId: createMechanic
+      tags: [Mechanics]
+      summary: "Create mechanic"
+      description: "Body: name (required), specialty (optional)."
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/MechanicCreateUpdatePayload" }
+          x-examples:
+            application/json:
+              name: "Marco Ruiz"
+              specialty: "Brakes"
+      responses:
+        201:
+          description: "Created"
+          schema: { $ref: "#/definitions/Mechanic" }
+        400:
+          description: "Validation failed"
+          schema: { $ref: "#/definitions/Error" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /mechanics/{mid}:
+    parameters:
+      - name: mid
+        in: path
+        required: true
+        type: integer
+    get:
+      operationId: getMechanic
+      tags: [Mechanics]
+      summary: "Get mechanic by id"
+      description: "Return a single mechanic by id."
+      security: [] # public read
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/Mechanic" }
+        404:
+          description: "Not found"
+          schema: { $ref: "#/definitions/NotFoundError" }
+    put:
+      operationId: updateMechanic
+      tags: [Mechanics]
+      summary: "Update mechanic"
+      description: "Update name and/or specialty."
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/MechanicCreateUpdatePayload" }
+          x-examples:
+            application/json:
+              name: "Marco R."
+              specialty: "Suspension"
+      responses:
+        200:
+          description: "Updated"
+          schema: { $ref: "#/definitions/Mechanic" }
+        400:
+          description: "Validation failed"
+          schema: { $ref: "#/definitions/Error" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+    delete:
+      operationId: deleteMechanic
+      tags: [Mechanics]
+      summary: "Delete mechanic"
+      description: "Delete a mechanic by id."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "Deleted"
+          schema: { $ref: "#/definitions/DeleteResponse" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /mechanics/leaderboard:
+    get:
+      operationId: mechanicLeaderboard
+      security: [] # public
+      tags: [Mechanics]
+      summary: "Mechanic ticket leaderboard"
+      description: "Rank mechanics by total ticket counts (primary + M2M)."
+      responses:
+        200:
+          description: "OK"
+          schema:
+            type: array
+            items: { $ref: "#/definitions/MechanicWithCount" }
+
+  ############################
+  # INVENTORY (public read, protected write)
+  ############################
+  /inventory:
+    get:
+      operationId: listInventoryPublic
+      security: [] # public
+      tags: [Inventory]
+      summary: "List parts (public)"
+      description: "Cached list of parts (name asc)."
+      responses:
+        200:
+          description: "OK"
+          schema:
+            type: array
+            items: { $ref: "#/definitions/Inventory" }
+
+    post:
+      operationId: createPart
+      tags: [Inventory]
+      summary: "Create part"
+      description: "Create a new inventory part."
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/InventoryCreateUpdatePayload" }
+          x-examples:
+            application/json:
+              name: "Brake pad set"
+              price: 49.99
+      responses:
+        201:
+          description: "Created"
+          schema: { $ref: "#/definitions/Inventory" }
+        400:
+          description: "Validation failed"
+          schema: { $ref: "#/definitions/Error" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /inventory/{pid}:
+    parameters:
+      - name: pid
+        in: path
+        required: true
+        type: integer
+    get:
+      operationId: getPart
+      tags: [Inventory]
+      summary: "Get part by id"
+      description: "Return a single inventory item by id."
+      security: [] # public read
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/Inventory" }
+        404:
+          description: "Not found"
+          schema: { $ref: "#/definitions/NotFoundError" }
+    put:
+      operationId: updatePart
+      tags: [Inventory]
+      summary: "Update part"
+      description: "Update name/price for a part."
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/InventoryCreateUpdatePayload" }
+          x-examples:
+            application/json:
+              name: "Premium brake pad set"
+              price: 59.99
+      responses:
+        200:
+          description: "Updated"
+          schema: { $ref: "#/definitions/Inventory" }
+        400:
+          description: "Validation failed"
+          schema: { $ref: "#/definitions/Error" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+    delete:
+      operationId: deletePart
+      tags: [Inventory]
+      summary: "Delete part"
+      description: "Delete an inventory item by id."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "Deleted"
+          schema: { $ref: "#/definitions/DeleteResponse" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  ############################
+  # TICKETS (protected)
+  ############################
+  /tickets:
+    get:
+      operationId: listTickets
+      tags: [Tickets]
+      summary: "List tickets"
+      description: "Cached list (newest first)."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "OK"
+          schema:
+            type: array
+            items: { $ref: "#/definitions/ServiceTicket" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+    post:
+      operationId: createTicket
+      tags: [Tickets]
+      summary: "Create ticket"
+      description: "Create a new service ticket."
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/TicketCreatePayload" }
+          x-examples:
+            application/json:
+              description: "Replace front brake pads"
+              primary_mechanic_id: 2
+      responses:
+        201:
+          description: "Created"
+          schema: { $ref: "#/definitions/ServiceTicket" }
+        400:
+          description: "Validation failed"
+          schema: { $ref: "#/definitions/Error" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /tickets/{ticket_id}:
+    parameters:
+      - name: ticket_id
+        in: path
+        required: true
+        type: integer
+    get:
+      operationId: getTicket
+      tags: [Tickets]
+      summary: "Get ticket by id"
+      description: "Return a single ticket by id."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/ServiceTicket" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+        404:
+          description: "Not found"
+          schema: { $ref: "#/definitions/NotFoundError" }
+    delete:
+      operationId: deleteTicket
+      tags: [Tickets]
+      summary: "Delete ticket"
+      description: "Delete a ticket by id."
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: "Deleted"
+          schema: { $ref: "#/definitions/DeleteResponse" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /tickets/{ticket_id}/edit:
+    put:
+      operationId: editTicketMechanics
+      tags: [Tickets]
+      summary: "Add/remove mechanics on a ticket"
+      description: "Body may include add_ids and/or remove_ids arrays."
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: ticket_id
+          in: path
+          required: true
+          type: integer
+        - in: body
+          name: body
+          required: true
+          schema: { $ref: "#/definitions/TicketEditMechanicsPayload" }
+          x-examples:
+            application/json:
+              add_ids: [3]
+              remove_ids: [2]
+      responses:
+        200:
+          description: "Updated"
+          schema: { $ref: "#/definitions/ServiceTicket" }
+        400:
+          description: "Validation failed"
+          schema: { $ref: "#/definitions/Error" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+
+  /tickets/{ticket_id}/add-part/{part_id}:
+    post:
+      operationId: attachPartToTicket
+      tags: [Tickets]
+      summary: "Attach a part to a ticket"
+      description: "Attach existing inventory part to a ticket."
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: ticket_id
+          in: path
+          required: true
+          type: integer
+        - name: part_id
+          in: path
+          required: true
+          type: integer
+      responses:
+        200:
+          description: "OK"
+          schema: { $ref: "#/definitions/ServiceTicket" }
+        401:
+          description: "Unauthorized"
+          schema: { $ref: "#/definitions/UnauthorizedError" }
+        404:
+          description: "Ticket or part not found"
+          schema: { $ref: "#/definitions/NotFoundError" }
+
+definitions:
+  # ===== Core entities (ResponseDefinitions) =====
+  User:
+    type: object
+    properties:
+      id: { type: integer, example: 12 }
+      name: { type: string, example: "Ava Diaz" }
+      email: { type: string, example: "ava@example.com" }
+
+  UserWithToken:
+    type: object
+    properties:
+      id: { type: integer, example: 12 }
+      name: { type: string, example: "Ava Diaz" }
+      email: { type: string, example: "ava@example.com" }
+      token: { type: string, example: "eyJhbGciOiJIUzI1NiIs..." }
+
+  PaginatedUsers:
+    type: object
+    properties:
+      items:
+        type: array
+        items: { $ref: "#/definitions/User" }
+      page: { type: integer, example: 1 }
+      per_page: { type: integer, example: 20 }
+      total: { type: integer, example: 42 }
+      pages: { type: integer, example: 3 }
+
+  Mechanic:
+    type: object
+    properties:
+      id: { type: integer, example: 2 }
+      name: { type: string, example: "Marco Ruiz" }
+      specialty: { type: string, example: "Brakes" }
+
+  MechanicWithCount:
+    type: object
+    properties:
+      id: { type: integer, example: 2 }
+      name: { type: string, example: "Marco Ruiz" }
+      specialty: { type: string, example: "Brakes" }
+      tickets_count: { type: integer, example: 17 }
+
+  Inventory:
+    type: object
+    properties:
+      id: { type: integer, example: 5 }
+      name: { type: string, example: "Brake pad set" }
+      price: { type: number, format: float, example: 49.99 }
+
+  ServiceTicket:
+    type: object
+    properties:
+      id: { type: integer, example: 101 }
+      description: { type: string, example: "Replace front brake pads" }
+      status: { type: string, example: "open" }
+      user:
+        $ref: "#/definitions/User"
+      primary_mechanic:
+        $ref: "#/definitions/Mechanic"
+      mechanics:
+        type: array
+        items: { $ref: "#/definitions/Mechanic" }
+      parts:
+        type: array
+        items: { $ref: "#/definitions/Inventory" }
+
+  # ===== PayloadDefinitions =====
+  UserSignupPayload:
+    type: object
+    required: [name, email, password]
+    properties:
+      name: { type: string }
+      email: { type: string }
+      password: { type: string }
+
+  UserUpdatePayload:
+    type: object
+    properties:
+      name: { type: string }
+      email: { type: string }
+      password: { type: string }
+
+  LoginPayload:
+    type: object
+    required: [email, password]
+    properties:
+      email: { type: string }
+      password: { type: string }
+
+  LoginResponse:
+    type: object
+    properties:
+      token: { type: string, example: "eyJhbGciOiJIUzI1NiIs..." }
+      user: { $ref: "#/definitions/User" }
+
+  MechanicCreateUpdatePayload:
+    type: object
+    required: [name]
+    properties:
+      name: { type: string }
+      specialty: { type: string }
+
+  InventoryCreateUpdatePayload:
+    type: object
+    required: [name, price]
+    properties:
+      name: { type: string }
+      price: { type: number, format: float }
+
+  TicketCreatePayload:
+    type: object
+    required: [description]
+    properties:
+      description: { type: string }
+      primary_mechanic_id: { type: integer }
+
+  TicketEditMechanicsPayload:
+    type: object
+    properties:
+      add_ids:
+        type: array
+        items: { type: integer }
+      remove_ids:
+        type: array
+        items: { type: integer }
+
+  DeleteResponse:
+    type: object
+    properties:
+      deleted: { type: integer, example: 1 }
+
+  # ===== Error models =====
+  Error:
+    type: object
+    properties:
+      status: { type: string, example: "error" }
+      code: { type: string, example: "INVALID_INPUT" }
+      message: { type: string, example: "email is required" }
+      details:
+        type: object
+        additionalProperties: true
+        example:
+          field: "email"
+          issue: "missing"
+
+  UnauthorizedError:
+    allOf:
+      - $ref: "#/definitions/Error"
+    example:
+      status: "error"
+      code: "UNAUTHORIZED"
+      message: "Provide a Bearer token in the Authorization header."
+
+  NotFoundError:
+    allOf:
+      - $ref: "#/definitions/Error"
+    example:
+      status: "error"
+      code: "NOT_FOUND"
+      message: "Resource not found."
+
+  ConflictError:
+    allOf:
+      - $ref: "#/definitions/Error"
+    example:
+      status: "error"
+      code: "CONFLICT"
+      message: "Email already registered."

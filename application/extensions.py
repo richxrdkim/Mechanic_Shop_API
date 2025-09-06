@@ -1,4 +1,3 @@
-
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
 from flask_migrate import Migrate
@@ -16,5 +15,4 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-cache = Cache(config={"CACHE_TYPE": "SimpleCache",
-              "CACHE_DEFAULT_TIMEOUT": 60})
+cache = Cache()

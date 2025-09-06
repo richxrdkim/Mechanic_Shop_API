@@ -1,127 +1,267 @@
-from flask import request, jsonify
+from flask import request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import asc
-from application.extensions import db, limiter, cache
-from application.models import User, ServiceTicket
-from application.schemas import user_schema, users_schema, login_schema, tickets_schema
-from application.util import encode_token, token_required
+import jwt
+import datetime
+
+from application.extensions import db, limiter
+from application.models import User
+from application.schemas import user_schema, users_schema
+from application.util import token_required
 from . import user_bp
 
-# CREATE (signup) -> returns token
 
-
+# SIGNUP — allow POST to both /users/ and /users/signup (and /users/signup/)
 @user_bp.route("/", methods=["POST"])
-@limiter.limit("5 per hour")
-def add_user():
+@user_bp.route("/signup", methods=["POST"])
+@user_bp.route("/signup/", methods=["POST"])
+@limiter.limit("10 per hour")
+def signup():
+    """
+    ---
+    tags: [Users]
+    summary: Create a user
+    description: Registers a user by name (optional), email, and password.
+    parameters:
+      - in: body
+        name: payload
+        schema: { $ref: '#/definitions/SignupPayload' }
+        examples:
+          application/json:
+            name: Alice
+            email: alice@example.com
+            password: password123
+    responses:
+      201:
+        description: Created
+        schema: { $ref: '#/definitions/UserResponse' }
+        examples:
+          application/json: { "id": 1, "email": "alice@example.com" }
+      400:
+        description: Missing required fields
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "email and password are required" }
+      409:
+        description: Email already exists
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Email already exists" }
+    """
     data = request.get_json() or {}
     name = data.get("name")
     email = data.get("email")
     password = data.get("password")
 
-    if not name or not email or not password:
-        return jsonify({"error": "name, email, and password are required"}), 400
-
+    if not email or not password:
+        return jsonify({"error": "email and password are required"}), 400
     if User.query.filter_by(email=email).first():
-        return jsonify({"error": "email already registered"}), 409
+        return jsonify({"error": "Email already exists"}), 409
 
-    user = User(name=name, email=email,
-                password_hash=generate_password_hash(password))
-    db.session.add(user)
+    u = User(
+        name=name,
+        email=email,
+        password_hash=generate_password_hash(password)
+    )
+    db.session.add(u)
     db.session.commit()
-
-    token = encode_token(user.id, role="user")
-    payload = user_schema.dump(user)
-    payload["token"] = token
-    return jsonify(payload), 201
-
-# LOGIN -> returns token
+    return user_schema.jsonify(u), 201
 
 
+# LOGIN — accept /users/login and /users/login/
 @user_bp.route("/login", methods=["POST"])
-@limiter.limit("10 per hour")
+@user_bp.route("/login/", methods=["POST"])
+@limiter.limit("50 per hour")
 def login():
+    """
+    ---
+    tags: [Users]
+    summary: Log in
+    description: Returns a JWT for subsequent authenticated requests.
+    parameters:
+      - in: body
+        name: payload
+        schema: { $ref: '#/definitions/LoginPayload' }
+        examples:
+          application/json:
+            email: alice@example.com
+            password: password123
+    responses:
+      200:
+        description: OK
+        schema: { $ref: '#/definitions/AuthResponse' }
+        examples:
+          application/json: { "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6..." }
+      400:
+        description: Missing required fields
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "email and password required" }
+      401:
+        description: Unauthorized
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Invalid credentials" }
+    """
     data = request.get_json() or {}
-    errors = login_schema.validate(data)
-    if errors:
-        return jsonify({"errors": errors}), 400
+    email = data.get("email")
+    password = data.get("password")
 
-    user = User.query.filter_by(email=data["email"]).first()
-    if not user or not check_password_hash(user.password_hash, data["password"]):
-        return jsonify({"error": "invalid credentials"}), 401
+    if not email or not password:
+        return jsonify({"error": "email and password required"}), 400
 
-    token = encode_token(user.id, role="user")
-    return jsonify({"token": token, "user": user_schema.dump(user)}), 200
+    user = User.query.filter_by(email=email).first()
+    if not user or not check_password_hash(user.password_hash, password):
+        return jsonify({"error": "Invalid credentials"}), 401
 
-# LIST (paginated, cached)
+    payload = {
+        "user_id": user.id,
+        "role": "user",
+        "exp": datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1),
+    }
+    token = jwt.encode(
+        payload, current_app.config["SECRET_KEY"], algorithm="HS256")
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+
+    return jsonify({"token": token}), 200
 
 
+# LIST (GET /users) — requires auth
 @user_bp.route("/", methods=["GET"])
-@cache.cached(timeout=60, query_string=True)
 @token_required
-def get_users(*, user_id, role):
-    page = max(int(request.args.get("page", 1)), 1)
-    per_page = min(max(int(request.args.get("per_page", 10)), 1), 100)
+def list_users(*, user_id, role):
+    """
+    ---
+    tags: [Users]
+    summary: List users (auth)
+    description: Returns all users.
+    security: [{Bearer: []}]
+    responses:
+      200:
+        description: OK
+        schema:
+          type: array
+          items: { $ref: '#/definitions/UserResponse' }
+        examples:
+          application/json:
+            - { "id": 2, "email": "bob@example.com" }
+            - { "id": 1, "email": "alice@example.com" }
+      401:
+        description: Unauthorized
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Unauthorized" }
+    """
+    users = User.query.order_by(User.id.desc()).all()
+    return jsonify(users_schema.dump(users)), 200
 
-    q = User.query.order_by(asc(User.name))
-    paginated = q.paginate(page=page, per_page=per_page, error_out=False)
-    return jsonify({
-        "items": users_schema.dump(paginated.items),
-        "page": page,
-        "per_page": per_page,
-        "total": paginated.total,
-        "pages": paginated.pages
-    }), 200
 
-# READ one
-
-
+# READ (GET /users/<id>) — requires auth
 @user_bp.route("/<int:uid>", methods=["GET"])
 @token_required
 def get_user(uid, *, user_id, role):
-    user = User.query.get_or_404(uid)
-    return user_schema.jsonify(user), 200
+    """
+    ---
+    tags: [Users]
+    summary: Get user by id (auth)
+    security: [{Bearer: []}]
+    responses:
+      200:
+        description: OK
+        schema: { $ref: '#/definitions/UserResponse' }
+        examples:
+          application/json: { "id": 1, "email": "alice@example.com" }
+      401:
+        description: Unauthorized
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Unauthorized" }
+      404:
+        description: Not found
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Not found" }
+    """
+    u = User.query.get_or_404(uid)
+    return user_schema.jsonify(u), 200
 
-# UPDATE (self or admin)
 
-
+# UPDATE (PUT /users/<id>) — requires auth
 @user_bp.route("/<int:uid>", methods=["PUT"])
 @token_required
 def update_user(uid, *, user_id, role):
-    if user_id != uid and role != "admin":
-        return jsonify({"error": "forbidden"}), 403
-
-    user = User.query.get_or_404(uid)
+    """
+    ---
+    tags: [Users]
+    summary: Update a user (auth)
+    description: Currently supports updating the email.
+    security: [{Bearer: []}]
+    parameters:
+      - in: body
+        name: payload
+        schema:
+          type: object
+          properties:
+            email: { type: string, example: "new@example.com" }
+        examples:
+          application/json:
+            email: new@example.com
+    responses:
+      200:
+        description: Updated
+        schema: { $ref: '#/definitions/UserResponse' }
+        examples:
+          application/json: { "id": 1, "email": "new@example.com" }
+      401:
+        description: Unauthorized
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Unauthorized" }
+      404:
+        description: Not found
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Not found" }
+    """
+    u = User.query.get_or_404(uid)
     data = request.get_json() or {}
-    if "name" in data:
-        user.name = data["name"]
     if "email" in data:
-        if User.query.filter(User.email == data["email"], User.id != uid).first():
-            return jsonify({"error": "email already in use"}), 409
-        user.email = data["email"]
-    if "password" in data and data["password"]:
-        user.password_hash = generate_password_hash(data["password"])
-
+        u.email = data["email"]
     db.session.commit()
-    return user_schema.jsonify(user), 200
-
-# DELETE (self or admin)
+    return user_schema.jsonify(u), 200
 
 
+# DELETE (DELETE /users/<id>) — requires auth
 @user_bp.route("/<int:uid>", methods=["DELETE"])
+@limiter.limit("10 per hour")
 @token_required
 def delete_user(uid, *, user_id, role):
-    if user_id != uid and role != "admin":
-        return jsonify({"error": "forbidden"}), 403
-    user = User.query.get_or_404(uid)
-    db.session.delete(user)
+    """
+    ---
+    tags: [Users]
+    summary: Delete a user (auth)
+    security: [{Bearer: []}]
+    responses:
+      200:
+        description: Deleted
+        schema:
+          type: object
+          properties:
+            deleted: { type: integer, example: 3 }
+        examples:
+          application/json: { "deleted": 3 }
+      401:
+        description: Unauthorized
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Unauthorized" }
+      404:
+        description: Not found
+        schema: { $ref: '#/definitions/ErrorResponse' }
+        examples:
+          application/json: { "error": "Not found" }
+    """
+    u = User.query.get_or_404(uid)
+    db.session.delete(u)
     db.session.commit()
     return jsonify({"deleted": uid}), 200
-
-# My tickets (auth)
-
-
-@user_bp.route("/my-tickets", methods=["GET"])
-@token_required
-def my_tickets(*, user_id, role):
-    tickets = ServiceTicket.query.filter_by(user_id=user_id).all()
-    return jsonify(tickets_schema.dump(tickets)), 200
