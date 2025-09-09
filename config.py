@@ -20,8 +20,9 @@ class DevelopmentConfig(Config):
 
 class TestingConfig(Config):
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = "sqlite://"
-    RATELIMIT_ENABLED = False          # <— add this line
+    SQLALCHEMY_DATABASE_URI = os.getenv(
+        "SQLALCHEMY_DATABASE_URI", "sqlite:///test_ci.db")
+    RATELIMIT_ENABLED = False
 
 
 class ProductionConfig(Config):

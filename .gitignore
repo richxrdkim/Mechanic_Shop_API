@@ -1,8 +1,44 @@
-.env
+# Byte-compiled / cache
 __pycache__/
-*.pyc
-instance/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# Environments
 .env
 .env.*
-*.env
+.venv/
 venv/
+ENV/
+
+# OS / tools
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+
+# Test & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Flask / instance data
+instance/
+
+# Local DBs
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
