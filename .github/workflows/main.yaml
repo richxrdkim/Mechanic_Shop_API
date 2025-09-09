@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   test-sqlite:
-    name: Unit tests (SQLite)
     runs-on: ubuntu-latest
 
     steps:
@@ -35,118 +34,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # If you keep test-only deps separate, add:
-          # if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
 
-      - name: Create test environment file
-        run: |
-          cat > .env.test << 'EOF'
-          # Keep this aligned with your TestingConfig.
-          FLASK_ENV=testing
-          TESTING=1
-          # Use SQLite for CI (fast, no service needed)
-          SQLALCHEMY_DATABASE_URI=sqlite:///test.db
-          # Secrets used by your app (replace if your code expects other names)
-          SECRET_KEY=${{ secrets.SECRET_KEY || 'dev-secret' }}
-          JWT_SECRET=${{ secrets.JWT_SECRET || 'dev-jwt-secret' }}
-          EOF
-
-      - name: Export env vars
-        run: |
-          # Load env vars for the current shell
-          set -a
-          source .env.test
-          set +a
-          # Optional: show which DB URI is in use (masked by runner logs)
-          python -c "import os; print('DB URI set:', os.getenv('SQLALCHEMY_DATABASE_URI'))"
-
-      - name: Run unit tests (unittest)
-        env:
-          # Make sure tests see the env too
-          FLASK_ENV: testing
-          TESTING: "1"
-          SQLALCHEMY_DATABASE_URI: sqlite:///test.db
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        run: |
-          python -m unittest discover -s tests -p "test_*.py" -v
-
-  # -------- OPTIONAL: MySQL-backed test job --------
-  # Enable this if your tests require MySQL instead of SQLite.
-  # You can run both jobs in parallel by leaving both defined.
-  test-mysql:
-    if: ${{ false }} # change to `true` or remove this line to enable
-    name: Unit tests (MySQL service)
-    runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: mechanic_test
-          MYSQL_USER: app
-          MYSQL_PASSWORD: app
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-
-    steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: Wait for MySQL to be ready
-        run: |
-          for i in {1..30}; do
-            if mysqladmin ping -h 127.0.0.1 -u root -proot --silent; then
-              echo "MySQL is up!"
-              break
-            fi
-            echo "Waiting for MySQL..."
-            sleep 2
-          done
-
-      - name: Prepare test env (MySQL)
-        run: |
-          cat > .env.test << 'EOF'
-          FLASK_ENV=testing
-          TESTING=1
-          SQLALCHEMY_DATABASE_URI=mysql+mysqlconnector://app:app@127.0.0.1:3306/mechanic_test
-          SECRET_KEY=${{ secrets.SECRET_KEY || 'dev-secret' }}
-          JWT_SECRET=${{ secrets.JWT_SECRET || 'dev-jwt-secret' }}
-          EOF
-
-      - name: Export env vars
-        run: |
-          set -a
-          source .env.test
-          set +a
-
-      # If you use Alembic/Flask-Migrate, uncomment an appropriate command:
-      # - name: Run DB migrations
-      #   run: |
-      #     flask db upgrade  # ensure FLASK_APP is set in your repo, or:
-      #     # python -m application.scripts.migrate      # if you have a custom script
-
-      - name: Run unit tests (unittest)
+      - name: Test (unittest)
         env:
           FLASK_ENV: testing
           TESTING: "1"
-          SQLALCHEMY_DATABASE_URI: mysql+mysqlconnector://app:app@127.0.0.1:3306/mechanic_test
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # Your tests already work on SQLite; keep it simple for CI
+          SQLALCHEMY_DATABASE_URI: sqlite:///test_ci.db
+          SECRET_KEY: ${{ secrets.SECRET_KEY || 'dev-secret' }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'dev-jwt-secret' }}
         run: |
-          python -m unittest discover -s tests -p "test_*.py" -v
+          python -m unittest discover -s tests -p "test_*.py" -t . -v
