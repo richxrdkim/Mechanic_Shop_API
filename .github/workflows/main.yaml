@@ -35,13 +35,35 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Test (unittest)
-        env:
-          FLASK_ENV: testing
-          TESTING: "1"
-          # Your tests already work on SQLite; keep it simple for CI
-          SQLALCHEMY_DATABASE_URI: sqlite:///test_ci.db
-          SECRET_KEY: ${{ secrets.SECRET_KEY || 'dev-secret' }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET || 'dev-jwt-secret' }}
+      - name: Prepare test env (with safe defaults)
+        shell: bash
+        run: |
+          # Defaults if secrets aren’t set
+          echo "FLASK_ENV=testing" >> $GITHUB_ENV
+          echo "TESTING=1" >> $GITHUB_ENV
+          echo "SQLALCHEMY_DATABASE_URI=sqlite:///test_ci.db" >> $GITHUB_ENV
+
+          # Pull secrets if present; otherwise set dev defaults
+          if [ -n "${{ secrets.SECRET_KEY }}" ]; then
+            echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> $GITHUB_ENV
+          else
+            echo "SECRET_KEY=dev-secret" >> $GITHUB_ENV
+          fi
+
+          if [ -n "${{ secrets.JWT_SECRET }}" ]; then
+            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> $GITHUB_ENV
+          else
+            echo "JWT_SECRET=dev-jwt-secret" >> $GITHUB_ENV
+          fi
+
+      - name: Quick debug info
+        run: |
+          python -c "import sys,platform; print('Python:', sys.version); print('Platform:', platform.platform())"
+          echo "Top-level: $GITHUB_WORKSPACE"
+          ls -la
+          echo "---- tree (first level) ----"
+          find . -maxdepth 2 -type d -print
+
+      - name: Run unit tests
         run: |
           python -m unittest discover -s tests -p "test_*.py" -t . -v
