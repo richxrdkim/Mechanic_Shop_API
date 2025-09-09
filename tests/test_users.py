@@ -1,10 +1,10 @@
-from tests.test_base import APITestCase
+from tests.test_base import DBTestCase
 from application.extensions import db
 from application.models import User
 from werkzeug.security import generate_password_hash
 
 
-class UsersTestCase(APITestCase):
+class UsersTestCase(DbTestCase):
     def test_signup_positive(self):
         resp = self.client.post("/users/", json={
             "name": "Alice",
