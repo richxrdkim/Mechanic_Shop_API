@@ -1,8 +1,8 @@
 # tests/test_inventory.py
-from .test_base import DbTestCase
+from .test_base import DBTestCase
 
 
-class InventoryRouteTests(DbTestCase):
+class InventoryRouteTests(DBTestCase):
     def test_inventory_list_public(self):
         res = self.client.get("/inventory/")
         self.assertEqual(res.status_code, 200)

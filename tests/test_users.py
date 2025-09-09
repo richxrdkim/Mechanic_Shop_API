@@ -4,7 +4,7 @@ from application.models import User
 from werkzeug.security import generate_password_hash
 
 
-class UsersTestCase(DbTestCase):
+class UsersTestCase(DBTestCase):
     def test_signup_positive(self):
         resp = self.client.post("/users/", json={
             "name": "Alice",

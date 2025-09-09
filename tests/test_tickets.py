@@ -1,8 +1,8 @@
 # tests/test_tickets.py
-from .test_base import DbTestCase
+from .test_base import DBTestCase
 
 
-class TicketsRouteTests(DbTestCase):
+class TicketsRouteTests(DBTestCase):
     def test_ticket_create_auth_201(self):
         headers = self.auth_headers()
         res = self.client.post(

@@ -1,8 +1,8 @@
 # tests/test_mechanics.py
-from .test_base import DbTestCase
+from .test_base import DBTestCase
 
 
-class MechanicsRouteTests(DbTestCase):
+class MechanicsRouteTests(DBTestCase):
     def test_mechanics_list_public(self):
         res = self.client.get("/mechanics/")
         self.assertEqual(res.status_code, 200)
