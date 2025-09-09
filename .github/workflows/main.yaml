@@ -13,6 +13,17 @@ jobs:
   test-sqlite:
     runs-on: ubuntu-latest
 
+    # Make imports stable and force testing mode for the app factory
+    env:
+      PYTHONPATH: "."
+      TESTING: "1"
+      FLASK_ENV: testing
+      # Use in-memory SQLite to avoid path issues. If you prefer a file, use: sqlite:///test_ci.db
+      SQLALCHEMY_DATABASE_URI: "sqlite:///:memory:"
+      # Safe defaults; GitHub Secrets override if set
+      SECRET_KEY: ${{ secrets.SECRET_KEY || 'dev-secret' }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET || 'dev-jwt-secret' }}
+
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -35,34 +46,41 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Prepare test env (with safe defaults)
-        shell: bash
-        run: |
-          # Defaults if secrets aren’t set
-          echo "FLASK_ENV=testing" >> $GITHUB_ENV
-          echo "TESTING=1" >> $GITHUB_ENV
-          echo "SQLALCHEMY_DATABASE_URI=sqlite:///test_ci.db" >> $GITHUB_ENV
-
-          # Pull secrets if present; otherwise set dev defaults
-          if [ -n "${{ secrets.SECRET_KEY }}" ]; then
-            echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> $GITHUB_ENV
-          else
-            echo "SECRET_KEY=dev-secret" >> $GITHUB_ENV
-          fi
-
-          if [ -n "${{ secrets.JWT_SECRET }}" ]; then
-            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> $GITHUB_ENV
-          else
-            echo "JWT_SECRET=dev-jwt-secret" >> $GITHUB_ENV
-          fi
-
       - name: Quick debug info
         run: |
-          python -c "import sys,platform; print('Python:', sys.version); print('Platform:', platform.platform())"
-          echo "Top-level: $GITHUB_WORKSPACE"
+          python - <<'PY'
+          import sys, platform, os
+          print("Python:", sys.version)
+          print("Platform:", platform.platform())
+          print("TESTING =", os.getenv("TESTING"))
+          print("FLASK_ENV =", os.getenv("FLASK_ENV"))
+          print("SQLALCHEMY_DATABASE_URI =", os.getenv("SQLALCHEMY_DATABASE_URI"))
+          PY
+          echo "Repo root: $GITHUB_WORKSPACE"
           ls -la
-          echo "---- tree (first level) ----"
-          find . -maxdepth 2 -type d -print
+
+      - name: Sanity check app config
+        run: |
+          python - <<'PY'
+          from application import create_app
+          app = create_app()  # should auto-pick TestingConfig when TESTING=1
+          with app.app_context():
+              print("Loaded DB:", app.config["SQLALCHEMY_DATABASE_URI"])
+              print("TESTING:", app.config["TESTING"])
+          PY
+
+      # Optional: explicitly init the test DB once (harmless if your tests already do this)
+      - name: Initialize test DB
+        run: |
+          python - <<'PY'
+          from application import create_app
+          from application.extensions import db
+          app = create_app()
+          with app.app_context():
+              db.drop_all()
+              db.create_all()
+              print("DB initialized")
+          PY
 
       - name: Run unit tests
         run: |
