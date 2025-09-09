@@ -27,4 +27,4 @@ class TestingConfig(Config):
 
 class ProductionConfig(Config):
     # Must be set by environment in prod — but don't crash at import time
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL")
+    SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI")
