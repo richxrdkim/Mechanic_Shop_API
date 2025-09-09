@@ -14,7 +14,7 @@ from . import user_bp
 @user_bp.route("/", methods=["POST"])
 @user_bp.route("/signup", methods=["POST"])
 @user_bp.route("/signup/", methods=["POST"])
-@limiter.limit("10 per hour")
+@limiter.limit("100 per hour")
 def signup():
     """
     ---

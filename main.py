@@ -1,3 +1,4 @@
+from application.extensions import db
 from application import create_app
 from dotenv import load_dotenv
 load_dotenv()
