@@ -14,7 +14,7 @@ def make_token(user_id: int, role: str = "user") -> str:
 
 
 def token_required(fn):
-    @wraps(f)
+    @wraps(fn)
     def wrapper(*args, **kwargs):
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
