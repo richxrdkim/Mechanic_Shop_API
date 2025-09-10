@@ -13,8 +13,8 @@ info:
     ## Support
     For help, email support@example.com
 
-host: "127.0.0.1:5000"
-schemes: [http]
+host: "mechanic-shop-api-vf6k.onrender.com"
+schemes: [https]
 consumes: ["application/json"]
 produces: ["application/json"]
 
