@@ -1,9 +1,8 @@
-from application.extensions import db
 from application import create_app
 from dotenv import load_dotenv
 load_dotenv()
 
-app = create_app('ProductionConfig')
+app = create_app("production")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)
