@@ -10,17 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  test-sqlite:
+  test:
     runs-on: ubuntu-latest
-
-    # Make imports stable and force testing mode for the app factory
     env:
       PYTHONPATH: "."
       TESTING: "1"
       FLASK_ENV: testing
-      # Use in-memory SQLite to avoid path issues. If you prefer a file, use: sqlite:///test_ci.db
       SQLALCHEMY_DATABASE_URI: "sqlite:///:memory:"
-      # Safe defaults; GitHub Secrets override if set
       SECRET_KEY: ${{ secrets.SECRET_KEY || 'dev-secret' }}
       JWT_SECRET: ${{ secrets.JWT_SECRET || 'dev-jwt-secret' }}
 
@@ -69,8 +65,7 @@ jobs:
               print("TESTING:", app.config["TESTING"])
           PY
 
-      # Optional: explicitly init the test DB once (harmless if your tests already do this)
-      - name: Initialize test DB
+      - name: Initialize test DB (optional)
         run: |
           python - <<'PY'
           from application import create_app
@@ -86,31 +81,14 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_*.py" -t . -v
 
-deploy:
-  needs: test
-  runs-on: ubuntu-latest
-
-  steps:
-    - name: Check out Code
-      uses: actions/checkout@v4
-
-    - name: set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-    
-    - name: Create virtual environment
-      run: |
-        python -m venv venv
-        source venv/bin/activate
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install -r requirements.txt
-
-    - name: Deploy to production
+  deploy:
+    # Only deploy on push (not PR) and only after tests pass
+    if: ${{ github.event_name == 'push' }}
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Render
         uses: johnbeynon/render-deploy-action@v0.0.8
         with:
-          service-id: ${{ secrets.SERVICE_ID }} 
-          api-key: ${{ secrets.RENDER_API_KEY }}   
+          service-id: ${{ secrets.SERVICE_ID }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
